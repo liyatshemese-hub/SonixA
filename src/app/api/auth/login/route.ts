@@ -4,9 +4,12 @@ import jwt from 'jsonwebtoken';
 import dbConnect from '@/lib/mongodb';
 import User from '@/lib/models/User';
 
-const JWT_SECRET = process.env.JWT_SECRET!;
-
 export async function POST(request: NextRequest) {
+  const JWT_SECRET = process.env.JWT_SECRET;
+  if (!JWT_SECRET) {
+    return NextResponse.json({ error: 'Missing JWT_SECRET' }, { status: 500 });
+  }
+
   await dbConnect();
 
   const { email, password } = await request.json();

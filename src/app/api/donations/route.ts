@@ -5,31 +5,45 @@ import Donation from '@/lib/models/Donation';
 import Artist from '@/lib/models/Artist';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET!;
-const PAYFAST_MERCHANT_ID = process.env.PAYFAST_MERCHANT_ID!;
-const PAYFAST_MERCHANT_KEY = process.env.PAYFAST_MERCHANT_KEY!;
-const PAYFAST_RETURN_URL = process.env.PAYFAST_RETURN_URL!;
-const PAYFAST_CANCEL_URL = process.env.PAYFAST_CANCEL_URL!;
-const PAYFAST_NOTIFY_URL = process.env.PAYFAST_NOTIFY_URL!;
-const PAYFAST_PASSPHRASE = process.env.PAYFAST_PASSPHRASE || '';
-const PAYFAST_URL = process.env.PAYFAST_SANDBOX === 'true'
-  ? 'https://sandbox.payfast.co.za/eng/process'
-  : 'https://www.payfast.co.za/eng/process';
+function getRequiredEnv(name: string) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
 
-function createPayfastSignature(data: Record<string, string>) {
+function getPayfastConfig() {
+  return {
+    merchantId: getRequiredEnv('PAYFAST_MERCHANT_ID'),
+    merchantKey: getRequiredEnv('PAYFAST_MERCHANT_KEY'),
+    returnUrl: getRequiredEnv('PAYFAST_RETURN_URL'),
+    cancelUrl: getRequiredEnv('PAYFAST_CANCEL_URL'),
+    notifyUrl: getRequiredEnv('PAYFAST_NOTIFY_URL'),
+    passphrase: process.env.PAYFAST_PASSPHRASE || '',
+    url: process.env.PAYFAST_SANDBOX === 'true'
+      ? 'https://sandbox.payfast.co.za/eng/process'
+      : 'https://www.payfast.co.za/eng/process',
+  };
+}
+
+function createPayfastSignature(data: Record<string, string>, passphrase: string) {
   const ordered = Object.keys(data)
     .sort()
     .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(data[key])}`)
     .join('&');
 
-  const stringToHash = PAYFAST_PASSPHRASE
-    ? `${ordered}&passphrase=${encodeURIComponent(PAYFAST_PASSPHRASE)}`
+  const stringToHash = passphrase
+    ? `${ordered}&passphrase=${encodeURIComponent(passphrase)}`
     : ordered;
 
   return createHash('md5').update(stringToHash).digest('hex');
 }
 
 export async function POST(request: NextRequest) {
+  const JWT_SECRET = getRequiredEnv('JWT_SECRET');
+  const payfast = getPayfastConfig();
+
   await dbConnect();
 
   const token = request.headers.get('authorization')?.replace('Bearer ', '');
@@ -68,11 +82,11 @@ export async function POST(request: NextRequest) {
   await donation.save();
 
   const paymentData: Record<string, string> = {
-    merchant_id: PAYFAST_MERCHANT_ID,
-    merchant_key: PAYFAST_MERCHANT_KEY,
-    return_url: PAYFAST_RETURN_URL,
-    cancel_url: PAYFAST_CANCEL_URL,
-    notify_url: PAYFAST_NOTIFY_URL,
+    merchant_id: payfast.merchantId,
+    merchant_key: payfast.merchantKey,
+    return_url: payfast.returnUrl,
+    cancel_url: payfast.cancelUrl,
+    notify_url: payfast.notifyUrl,
     amount: parsedAmount.toFixed(2),
     item_name: `Donation to ${artist.name}`,
     item_description: message || `Support ${artist.name}`,
@@ -81,8 +95,8 @@ export async function POST(request: NextRequest) {
     custom_str2: decoded.userId,
   };
 
-  const signature = createPayfastSignature(paymentData);
-  const redirectUrl = `${PAYFAST_URL}?${new URLSearchParams({
+  const signature = createPayfastSignature(paymentData, payfast.passphrase);
+  const redirectUrl = `${payfast.url}?${new URLSearchParams({
     ...paymentData,
     signature,
   }).toString()}`;
